@@ -55,7 +55,8 @@ def getTime():
     """
     return str(datetime.now().year).zfill(4) + str(datetime.now().month).zfill(2) \
     + str(datetime.now().day).zfill(2) + "_" + str(datetime.now().hour).zfill(2) \
-    + str(datetime.now().minute).zfill(2) + str(datetime.now().second).zfill(2)
+    + str(datetime.now().minute).zfill(2) + str(datetime.now().second).zfill(2) \
+    + "." + str(datetime.now().microsecond).zfill(6)
    
     
 def isPath(file):
@@ -124,16 +125,16 @@ def processLineArgument():
         if os.path.exists(opts.dest):
             DEST_DIR = opts.dest
         else:
-            if DEBUG:   print "[" + getTime() + "] Warning: " + opts.dest + " doesn't exist, using default /tmp/backup"
+            if DEBUG:   print "[" + getTime() + "] WARNING: " + opts.dest + " doesn't exist, using default /tmp/backup"
     else:
         if DEBUG:
-            print "[" + getTime() + "] Info: using default /tmp/backup"
+            print "[" + getTime() + "] INFO: using default /tmp/backup"
             
     if opts.logfile is not None:
         if isPath(opts.logfile):
             LOGFILE = opts.logfile
         else:
-            if DEBUG:   print "[" + getTime() + "] Warning: Using default /tmp/backup/backup.log"
+            if DEBUG:   print "[" + getTime() + "] WARNING: Using default /tmp/backup/backup.log"
     else:
         if DEBUG:   print "[" + getTime() + "] INFO: Using default /tmp/backup/backup.log"
         
@@ -151,7 +152,7 @@ def backupDB(db):
     stderr=PIPE)
     error = p.stderr.read()
     if error != "":
-        if DEBUG:   print "[" + getTime() + "] Error: " + error[:-1]
+        if DEBUG:   print "[" + getTime() + "] ERROR: " + error[:-1]
         LOGGER.error(error[:-1])
         os.remove("/tmp/" + db + ".sql")
         ret = False
@@ -182,7 +183,7 @@ def zipDB(db):
         try:
             zf.write(str(db) + ".sql", compress_type=compression)
         except OSError, e:
-            if DEBUG:   print "[" + getTime() + "] Error: ", e
+            if DEBUG:   print "[" + getTime() + "] ERROR: ", e
             LOGGER.error(e)
             os.remove(str(db) + ".sql.zip")
             ret = False
@@ -190,7 +191,7 @@ def zipDB(db):
             zf.close()
         
     else:
-        if DEBUG:   print "[" + getTime() + "] Error: there isn't file /tmp/" \
+        if DEBUG:   print "[" + getTime() + "] ERROR: there isn't file /tmp/" \
         + str(db) + ".sql"
         LOGGER.error("There isn't file /tmp/" + str(db) + ".sql")
         ret = False
@@ -216,13 +217,13 @@ def checkDependencies():
     elif os.path.exists("/bin/gzip"):
         COMPRESS = "gz"
     else:
-        if DEBUG:   print "[" + getTime() + "] Error: you must install either gzip or bzip2."
+        if DEBUG:   print "[" + getTime() + "] ERROR: you must install either gzip or bzip2."
         LOGGER.error("You must install either gzip or bzip2")
         ret = False
     
     #Checking mysqldump    
     if os.path.exists("/usr/bin/mysqldump") is False:
-        if DEBUG:   print "[" + getTime() + "] Error: you must install mysqldump."
+        if DEBUG:   print "[" + getTime() + "] ERROR: you must install mysqldump."
         LOGGER.error("You must install mysqldump")
         ret = False
             
@@ -244,7 +245,7 @@ def makeTar():
             for i in FILES.split():
                 tar.add(i)
         except OSError, e:
-            if DEBUG:   print "[" + getTime() + "] Error: ", e
+            if DEBUG:   print "[" + getTime() + "] ERROR: ", e
             LOGGER.error(e)
         finally:
             tar.close()
@@ -254,7 +255,7 @@ def makeTar():
                         
         os.chdir(actual_dir)
     else:
-        if DEBUG:   print "[" + getTime() + "] Error: no files to tar"
+        if DEBUG:   print "[" + getTime() + "] ERROR: no files to tar"
         LOGGER.error("No files to tar")
         ret = False
         
@@ -272,7 +273,7 @@ def cleanUp():
         for i in FILES.split():
             os.remove(i)
     except OSError, e:
-        if DEBUG:   print "[" + getTime() + "] Error: ", e
+        if DEBUG:   print "[" + getTime() + "] ERROR: ", e
         LOGGER.error(e)
         ret = False
     finally:
