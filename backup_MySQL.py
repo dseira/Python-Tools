@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-__applicationName__     = "backup.py"
+__applicationName__     = "backup_MySQL.py"
 __blurb__               = """Make a backup from MySQL tables"""
 __author__              = "David Seira davidseira@gmail.com"
 __version__             = "1.2"
@@ -21,34 +21,23 @@ __license__             = """This program is free software: you can redistribute
                         along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         """
 
-"""
-TODO: 
-- Filter input options
-- Extract the MySQL DBs with MySQL python module
-- Check the consistency of the database after the backup
-"""
 
 import os
-import re
-import optparse
 from subprocess import Popen, PIPE
 from datetime import datetime
-import time
 import shutil
 import tarfile
 import logging
+import argparse
+import sys
+import socket
 
-USER        = ""                          #MySQL user
-PASS        = ""                          #MySQL pass
-HOSTNAME    = "127.0.0.1"                 #MySQL hostname
-DB          = []                          #Total DBs
-DEBUG       = True                        #Debug mode
-COMPRESS    = None                        #Compression program
-FILES       = ""                          #Files created
-DEST_DIR    = "/tmp/backup"               #Destination backup directory
-LOGFILE     = "/tmp/backup/backup.log"    #logfile
-LOGGER      = None                        #Creating a logger instance
-        
+
+COMPRESS        = None    # Compression program
+FILES           = ""      # Files created
+log             = None
+
+
 def getTime():
     """
     Return the datetime now
@@ -56,108 +45,40 @@ def getTime():
     return str(datetime.now().year).zfill(4) + str(datetime.now().month).zfill(2) \
     + str(datetime.now().day).zfill(2) + "_" + str(datetime.now().hour).zfill(2) \
     + str(datetime.now().minute).zfill(2) + str(datetime.now().second).zfill(2) \
-    + "." + str(datetime.now().microsecond).zfill(6)
+    + "_" + str(datetime.now().microsecond).zfill(6)
    
     
-def isPath(file):
+def validIPv4(ipv4):
     """
-    Return if the path exists (removing the file).
-    """
-    ret = True
-    path = "/"
-    aux = file.split("/")
-    for i in range(1,len(aux)-1):
-        path = str(path) + str(aux[i]) + "/"
-    
-    if not os.path.exists(path):
-        ret = False
-        
-    return ret
-    
-    
-def usage():
-    """Function for show the usage.
-    
-    Return the usage information for the program.
-    """
-    print("\nBackup MySQL\n\n\
-         -u, --user\tMySQL User*\n\
-         -p, --pass\tMySQL Pass*\n\
-         --hostname\tMySQL Hostname\n\
-         --databases\tDatabases to backup, separate with commas*\n\
-         --dest\t\tDestination backup directory (/tmp/backup by default)\n\
-         -d, --debug\tPrint debug info\n\
-         -l, --logfile\tLogging file (/tmp/backup/backup.log by default)\n\n\
-         Options with * are mandatory\n\n\
-         Example: backup.py -u root -p 1234 --hostname 192.168.1.1 --databases radius,mysql,db1\n")
-    exit(3)
-    
+    Validate that the IP is an IPv4 valid address
 
-def processLineArgument():
-    """Process the line argument.
-    
-    Process the line argument, extract the differents options and save into a global variables.
+    @param ipv4: IP to check
+    @return: True or False.
     """
-    
-    global USER, PASS, DB, DEBUG, DEST_DIR, HOSTNAME, LOGFILE
-    parser = optparse.OptionParser()
-    parser.add_option('-u','--user',help='MySQL User',dest='user')
-    parser.add_option('-p','--pass',help='MySQL Pass',dest='password')
-    parser.add_option('','--hostname',help='MySQL Host',dest='hostname')
-    parser.add_option('','--databases',help='MySQL Databases',dest='db')
-    parser.add_option('','--dest',help='Destination backup dir',dest='dest')
-    parser.add_option('-l','--logfile',help='Logfile of the output',dest='logfile')
-    parser.add_option('-d','--debug',help='Print debug info',dest='debug',\
-    default=False,action='store_true')
-    
-    (opts,args) = parser.parse_args()
+    try:
+        socket.inet_aton(ipv4)
+        return True
+    except socket.error:
+        return False
 
-    #Mandatory options
-    if opts.user is None or opts.password is None or opts.db is None:
-       usage()
-
-    USER = opts.user
-    PASS = opts.password
-    DB = opts.db.split(",")
-    if opts.debug is not None:  DEBUG = opts.debug
-    if opts.hostname is not None:   HOSTNAME = opts.hostname
-    if opts.dest is not None:
-        if os.path.exists(opts.dest):
-            DEST_DIR = opts.dest
-        else:
-            if DEBUG:   print "[" + getTime() + "] WARNING: " + opts.dest + " doesn't exist, using default /tmp/backup"
-    else:
-        if DEBUG:
-            print "[" + getTime() + "] INFO: using default /tmp/backup"
-            
-    if opts.logfile is not None:
-        if isPath(opts.logfile):
-            LOGFILE = opts.logfile
-        else:
-            if DEBUG:   print "[" + getTime() + "] WARNING: Using default /tmp/backup/backup.log"
-    else:
-        if DEBUG:   print "[" + getTime() + "] INFO: Using default /tmp/backup/backup.log"
-        
   
-def backupDB(db):
+def backupDB(hostname, user, password, db):
     """
     Backup DBs with mysqldump.
     """
     global FILES
-    ret = True    
-    if DEBUG:   print "[" + getTime() + "] Backing Up DB #" + str(db) + "#..."
-    LOGGER.info("Backing Up DB #" + str(db) + "#...")
-    p = Popen("/usr/bin/mysqldump -u" + USER + " -p" + PASS + " -h " + HOSTNAME \
-    + " " + str(db) +     " > /tmp/" + str(db) + ".sql ", shell=True, stdout=PIPE, \
-    stderr=PIPE)
+    ret = True
+
+    log.info("Backing Up DB #" + str(db) + "#")
+    p = Popen("/usr/bin/mysqldump -u" + user + " -p" + password + " -h " + hostname + " " + str(db) + " > /tmp/"
+              + str(db) + ".sql ", shell=True, stdout=PIPE, stderr=PIPE)
     error = p.stderr.read()
     if error != "":
-        if DEBUG:   print "[" + getTime() + "] ERROR: " + error[:-1]
-        LOGGER.error(error[:-1])
+        log.error(error[:-1])
         os.remove("/tmp/" + db + ".sql")
         ret = False
     else:
-        FILES += db + ".sql.zip " #Adding the verified DB
+        FILES += db + ".sql.zip "  # Adding the verified DB
 
     return ret
        
@@ -177,143 +98,216 @@ def zipDB(db):
     actual_dir = os.getcwd()
     os.chdir('/tmp')
     if os.path.exists(str(db) + ".sql"):
-        if DEBUG:   print "[" + getTime() + "] Zipping #" + str(db) + "#..."
-        LOGGER.info("Zipping #" + str(db) + "#...")
-        zf = zipfile.ZipFile(str(db) + ".sql.zip","w", compression=zipfile.ZIP_DEFLATED)
+        log.info("Zipping #" + str(db) + "#")
+        zf = zipfile.ZipFile(str(db) + ".sql.zip", "w", compression=zipfile.ZIP_DEFLATED)
         try:
             zf.write(str(db) + ".sql", compress_type=compression)
         except OSError, e:
-            if DEBUG:   print "[" + getTime() + "] ERROR: ", e
-            LOGGER.error(e)
+            log.error(e)
             os.remove(str(db) + ".sql.zip")
             ret = False
         finally:
             zf.close()
         
     else:
-        if DEBUG:   print "[" + getTime() + "] ERROR: there isn't file /tmp/" \
-        + str(db) + ".sql"
-        LOGGER.error("There isn't file /tmp/" + str(db) + ".sql")
+        log.error("There isn't file /tmp/" + str(db) + ".sql")
         ret = False
         
     os.chdir(actual_dir)
-    return ret    
-          
-            
+    return ret
+
+
 def checkDependencies():
     """
     Check the dependencies like bzip2, gzip, mysqldump, etc...
     """
     global COMPRESS
     ret = True
-
-    #Creating destination folder    
-    if os.path.exists(DEST_DIR) is False:
-        os.mkdir(DEST_DIR)
             
-    #Check compression programs
+    # Check compression programs
     if os.path.exists("/bin/bzip2"):
         COMPRESS = "bz2"
+        log.info("Using bzip2")
     elif os.path.exists("/bin/gzip"):
         COMPRESS = "gz"
+        log.info("Using gzip")
     else:
-        if DEBUG:   print "[" + getTime() + "] ERROR: you must install either gzip or bzip2."
-        LOGGER.error("You must install either gzip or bzip2")
+        log.error("You must install either gzip or bzip2")
         ret = False
     
-    #Checking mysqldump    
+    # Checking mysqldump
     if os.path.exists("/usr/bin/mysqldump") is False:
-        if DEBUG:   print "[" + getTime() + "] ERROR: you must install mysqldump."
-        LOGGER.error("You must install mysqldump")
+        log.error("You must install mysqldump")
         ret = False
+    else:
+        log.info("msyqldump is installed")
             
     return ret
 
 
-def makeTar():
+def makeTar(hostname, destination):
     """
     Make the tar file with all of the DBs
     """    
     ret = True
     if FILES != "":
-        actual_dir = os.getcwd()
+        current_dir = os.getcwd()
         os.chdir('/tmp')
 
-        file = "backup_db_" + HOSTNAME + "_" + getTime() + ".tar." + str(COMPRESS)
-        tar = tarfile.open(file, "w|" + str(COMPRESS))
+        filename = "backup_db_" + hostname + "_" + getTime() + ".tar." + str(COMPRESS)
+        log.info("Saving tar backup in " + filename)
+
+        tar = tarfile.open(filename, "w|" + str(COMPRESS))
         try:
             for i in FILES.split():
                 tar.add(i)
         except OSError, e:
-            if DEBUG:   print "[" + getTime() + "] ERROR: ", e
-            LOGGER.error(e)
+            log.error(e)
         finally:
             tar.close()
         
-        #Moving the tar file to the destination directory
-        shutil.move(file,DEST_DIR)
-                        
-        os.chdir(actual_dir)
+        # Moving the tar file to the destination directory
+        if not os.path.exists(destination + "/" + filename):
+            shutil.move(filename, destination)
+
+        os.chdir(current_dir)
     else:
-        if DEBUG:   print "[" + getTime() + "] ERROR: no files to tar"
-        LOGGER.error("No files to tar")
+        log.error("No files to tar")
         ret = False
         
-    return ret    
+    return ret
    
    
 def cleanUp():
     """
     Cleaning the old files.
     """
+    log.info("Cleaning temporary files")
     ret = True
-    actual_dir = os.getcwd()
+    current_dir = os.getcwd()
     os.chdir('/tmp')
     try:
         for i in FILES.split():
             os.remove(i)
     except OSError, e:
-        if DEBUG:   print "[" + getTime() + "] ERROR: ", e
-        LOGGER.error(e)
+        log.error(e)
         ret = False
     finally:
-        os.chdir(actual_dir)
+        os.chdir(current_dir)
         
     return ret
     
-    
-def Run():
+
+def usage(message=None):
+    """Function for show the usage.
+
+    Return the usage information for the program.
     """
-    Main function to execute the backup of the radius tables.
+    print("\nBackup MySQL\n\n\
+         -u, --user\tMySQL User*\n\
+         -p, --pass\tMySQL Pass*\n\
+         --hostname\tMySQL Hostname\n\
+         --databases\tDatabases to backup, separate with commas*\n\
+         -d, --destination\t\tDestination backup directory (/tmp/backup by default)\n\
+         -v, --verbose\tVerbose mode\n\
+         -l, --logfile\tLogging file (/tmp/backup/backup.log by default)\n\n\
+         Options with * are mandatory\n\n\
+         Example: backup.py -u root -p 1234 --hostname 192.168.1.1 --databases radius mysql db1\n")
+
+    if message:
+        print message + "\n"
+
+    sys.exit(3)
+
+
+def processLineArgument():
     """
-    global LOGGER
-    processLineArgument()
-    if checkDependencies() is True:
-        
-        LOGGER = logging.getLogger('backup')
-        hdlr = logging.FileHandler(LOGFILE)
-        formatter = logging.Formatter('[%(asctime)s] [%(funcName)s] %(levelname)s %(message)s')
-        hdlr.setFormatter(formatter)
-        LOGGER.addHandler(hdlr) 
-        LOGGER.setLevel(logging.INFO)
-        
-        if DEBUG:   print "[" + getTime() + "] Starting Backup MySQL..."
-        LOGGER.info("Starting Backup MySQL...")
-        if DEBUG:   print "[" + getTime() + "] Starting Zip..."
-        LOGGER.info("Starting Zip...")
-        for database in DB:
-            if backupDB(database):
-                zipDB(database)
-                
-        if DEBUG:   print "[" + getTime() + "] Starting Packing..."
-        LOGGER.info("Starting Packing...")
-        if makeTar() is True:
-            if DEBUG:   print "[" + getTime() + "] Cleaning up Files..."
-            LOGGER.info("Cleaning up Files...")
-            cleanUp()
+    Process the line argument, extract the differents options and save into a global variables.
+
+    @return options: Dictionary with the options extracted from argument line.
+    """
+
+    global USER, PASS, DB, DEBUG, DEST_DIR, HOSTNAME, LOGFILE
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-u', '--user', help='MySQL User', dest='user')
+    parser.add_argument('-p', '--pass', help='MySQL Pass', dest='password')
+    parser.add_argument('--hostname', help='MySQL Host', dest='hostname')
+    parser.add_argument('--databases', help='MySQL Databases', dest='db', nargs='*')
+    parser.add_argument('-d', '--dest', help='Destination backup dir', dest='dest')
+    parser.add_argument('-l', '--logfile', help='Logfile of the output', dest='logfile')
+    parser.add_argument('-v', '--verbose', help='Print debug info', dest='verbose', default=False, action='store_true')
+
+    args = parser.parse_args()
+
+    options = {'VERBOSE_DEBUG': args.verbose,
+               'LOGFILE': "/tmp/backup-mysql.log"}
+
+    if args.user is not None and args.password is not None:
+        options['USER'] = args.user
+        options['PASS'] = args.password
+    else:
+        usage("Need user and password.")
+
+    if args.db is not None:
+        options['DB'] = args.db
+    else:
+        usage("Need a database to backup.")
+
+    if args.hostname is not None and validIPv4(args.hostname):
+        options['HOSTNAME'] = args.hostname
+    else:
+        options['HOSTNAME'] = "127.0.0.1"
+
+    if args.dest is not None and os.path.exists(args.dest):
+        options['DESTINATION'] = args.dest
+    else:
+        usage("Destination must be a valid directory.")
+
+    if args.logfile is not None and os.path.exists(os.path.dirname(args.logfile)):
+        options['LOGFILE'] = args.logfile
+
+    return options
+
+
+def main(options):
+    """
+    Main function to execute the backup of the tables.
+    """
+    log.info("Starting Backup MySQL")
+
+    if not checkDependencies():
+        sys.exit(3)
+
+    for database in options['DB']:
+        if backupDB(options['HOSTNAME'], options['USER'], options['PASS'], database):
+            zipDB(database)
+
+    if makeTar(options['HOSTNAME'], options['DESTINATION']):
+        cleanUp()
 
 
 #Launching the main execution
 if __name__ == "__main__":
-    Run()
+
+    options = processLineArgument()
+
+    # Preparing the logging system
+    log = logging.getLogger("backup")
+    log.setLevel(logging.INFO)
+    log_format = logging.Formatter('[%(asctime)s] [%(funcName)s] %(levelname)s %(message)s')
+    try:
+        fh = logging.FileHandler(options['LOGFILE'])
+        fh.setFormatter(log_format)
+        if options['VERBOSE_DEBUG']:
+            sh = logging.StreamHandler()
+            sh.setFormatter(log_format)
+            log.addHandler(sh)
+        log.addHandler(fh)
+    except IOError, e:
+        print e
+        sys.exit(3)
+
+    #Launching the executor
+    main(options)
+
 
