@@ -33,6 +33,9 @@ import sys
 import socket
 
 
+HOSTNAME        = ""
+USER            = ""
+PASSWORD        = ""
 COMPRESS        = None    # Compression program
 FILES           = ""      # Files created
 log             = None
@@ -278,9 +281,12 @@ def main(options):
     if not checkDependencies():
         sys.exit(3)
 
-    for database in options['DB']:
-        if backupDB(options['HOSTNAME'], options['USER'], options['PASS'], database):
-            zipDB(database)
+    if len(options['DB']) > 1:
+        log.info("Enabling multiprocessing")
+
+    else:
+        if backupDB(options['HOSTNAME'], options['USER'], options['PASS'], options['DB'][0]):
+            zipDB(options['DB'][0])
 
     if makeTar(options['HOSTNAME'], options['DESTINATION']):
         cleanUp()
