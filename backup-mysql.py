@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-__applicationName__     = "backup_MySQL.py"
+__applicationName__     = "backup-mysql.py"
 __blurb__               = """Make a backup from MySQL tables"""
 __author__              = "David Seira davidseira@gmail.com"
 __version__             = "1.2"
@@ -22,23 +22,35 @@ __license__             = """This program is free software: you can redistribute
                         """
 
 
-import os
-from subprocess import Popen, PIPE
-from datetime import datetime
-import shutil
-import tarfile
-import logging
+# Standard imports
 import argparse
-import sys
+from datetime import datetime
+import glob
+import logging
+from multiprocessing import Pool, Manager
+import os
+import shutil
 import socket
+from subprocess import Popen, PIPE
+import sys
+import tarfile
+import time
+
+# Other imports
+try:
+    from lockfile import FileLock
+except ImportError, e:
+    print "Error: " + e.message + ". Aborting."
+    sys.exit(3)
 
 
 HOSTNAME        = ""
 USER            = ""
 PASSWORD        = ""
 COMPRESS        = None    # Compression program
-FILES           = ""      # Files created
 log             = None
+PIDFILE         = "/var/run/backup_mysql.pid"
+FILES           = Manager().list()    # Files created. Shared memory for the multiprocessing.
 
 
 def getTime():
@@ -64,8 +76,38 @@ def validIPv4(ipv4):
     except socket.error:
         return False
 
-  
-def backupDB(hostname, user, password, db):
+
+def cleanPidfile():
+    """
+    Clean the pidfile when normal exit or error is produced
+    """
+    if os.path.exists(PIDFILE):
+        log.info("Cleanning the pidfile " + PIDFILE)
+        os.remove(PIDFILE)
+
+
+def createPidfile(pidfile):
+    """
+    Create a pidfile of the processes.
+    @param pidfile: Pidfile of the processes to save.
+    """
+    log.info("Creating pidfile " + str(pidfile))
+    f = open(PIDFILE, "a")
+    f.write(str(pidfile) + "\n")
+    f.close()
+
+
+def initProcess():
+    """
+    Initial process for handling the pidfile
+    """
+    #Locking the Pidfile concurrency
+    lock = FileLock(PIDFILE)
+    with lock:
+        createPidfile(os.getpid())
+
+
+def backupDB(db):
     """
     Backup DBs with mysqldump.
     """
@@ -73,7 +115,7 @@ def backupDB(hostname, user, password, db):
     ret = True
 
     log.info("Backing Up DB #" + str(db) + "#")
-    p = Popen("/usr/bin/mysqldump -u" + user + " -p" + password + " -h " + hostname + " " + str(db) + " > /tmp/"
+    p = Popen("/usr/bin/mysqldump -u" + USER + " -p" + PASSWORD + " -h " + HOSTNAME + " " + str(db) + " > /tmp/"
               + str(db) + ".sql ", shell=True, stdout=PIPE, stderr=PIPE)
     error = p.stderr.read()
     if error != "":
@@ -81,11 +123,11 @@ def backupDB(hostname, user, password, db):
         os.remove("/tmp/" + db + ".sql")
         ret = False
     else:
-        FILES += db + ".sql.zip "  # Adding the verified DB
+        FILES.append(db + ".sql.zip")  # Adding the verified DB
 
     return ret
-       
-  
+
+
 def zipDB(db):
     """
     Zip the databases.
@@ -151,9 +193,9 @@ def checkDependencies():
 def makeTar(hostname, destination):
     """
     Make the tar file with all of the DBs
-    """    
-    ret = True
-    if FILES != "":
+    """
+
+    if len(FILES) > 0:
         current_dir = os.getcwd()
         os.chdir('/tmp')
 
@@ -162,7 +204,7 @@ def makeTar(hostname, destination):
 
         tar = tarfile.open(filename, "w|" + str(COMPRESS))
         try:
-            for i in FILES.split():
+            for i in FILES:
                 tar.add(i)
         except OSError, e:
             log.error(e)
@@ -176,11 +218,8 @@ def makeTar(hostname, destination):
         os.chdir(current_dir)
     else:
         log.error("No files to tar")
-        ret = False
-        
-    return ret
-   
-   
+
+
 def cleanUp():
     """
     Cleaning the old files.
@@ -190,11 +229,15 @@ def cleanUp():
     current_dir = os.getcwd()
     os.chdir('/tmp')
     try:
-        for i in FILES.split():
-            os.remove(i)
+        for i in FILES:
+            os.remove(i)  # removing db.sql.zip
+            os.remove(i.split(".zip")[0])  # removing db.sql
+        cleanPidfile()
+
     except OSError, e:
         log.error(e)
         ret = False
+
     finally:
         os.chdir(current_dir)
         
@@ -206,16 +249,17 @@ def usage(message=None):
 
     Return the usage information for the program.
     """
-    print("\nBackup MySQL\n\n\
-         -u, --user\tMySQL User*\n\
-         -p, --pass\tMySQL Pass*\n\
-         --hostname\tMySQL Hostname\n\
-         --databases\tDatabases to backup, separate with commas*\n\
-         -d, --destination\t\tDestination backup directory (/tmp/backup by default)\n\
-         -v, --verbose\tVerbose mode\n\
-         -l, --logfile\tLogging file (/tmp/backup/backup.log by default)\n\n\
+    print("\nUsage: backup-mysql.py [OPTION]\n\n\
+    Backup the MySQL databases.\n\n\
+         -u, --user          MySQL User*\n\
+         -p, --pass          MySQL Pass*\n\
+         --hostname          MySQL Hostname\n\
+         --databases         Databases to backup, separate with spaces*\n\
+         -d, --destination   Destination backup directory (/tmp/backup by default)\n\
+         -v, --verbose       Verbose mode\n\
+         -l, --logfile       Logging file (/tmp/backup/backup.log by default)\n\n\
          Options with * are mandatory\n\n\
-         Example: backup.py -u root -p 1234 --hostname 192.168.1.1 --databases radius mysql db1\n")
+         Example: backup-mysql.py -u root -p 1234 --hostname 192.168.1.1 --databases radius mysql db1\n")
 
     if message:
         print message + "\n"
@@ -230,7 +274,7 @@ def processLineArgument():
     @return options: Dictionary with the options extracted from argument line.
     """
 
-    global USER, PASS, DB, DEBUG, DEST_DIR, HOSTNAME, LOGFILE
+    global USER, PASSWORD, HOSTNAME
     parser = argparse.ArgumentParser()
     parser.add_argument('-u', '--user', help='MySQL User', dest='user')
     parser.add_argument('-p', '--pass', help='MySQL Pass', dest='password')
@@ -243,11 +287,14 @@ def processLineArgument():
     args = parser.parse_args()
 
     options = {'VERBOSE_DEBUG': args.verbose,
-               'LOGFILE': "/tmp/backup-mysql.log"}
+               'LOGFILE': "/tmp/backup-mysql.log",
+               'MAX_PROCESSES': 20}
 
     if args.user is not None and args.password is not None:
         options['USER'] = args.user
+        USER = args.user
         options['PASS'] = args.password
+        PASSWORD = args.password
     else:
         usage("Need user and password.")
 
@@ -258,8 +305,10 @@ def processLineArgument():
 
     if args.hostname is not None and validIPv4(args.hostname):
         options['HOSTNAME'] = args.hostname
+        HOSTNAME = args.hostname
     else:
         options['HOSTNAME'] = "127.0.0.1"
+        HOSTNAME = args.hostname
 
     if args.dest is not None and os.path.exists(args.dest):
         options['DESTINATION'] = args.dest
@@ -272,33 +321,15 @@ def processLineArgument():
     return options
 
 
-def main(options):
+def configLogger(options):
     """
-    Main function to execute the backup of the tables.
+    Configure the logger service.
+    @param options:
     """
-    log.info("Starting Backup MySQL")
-
-    if not checkDependencies():
-        sys.exit(3)
-
-    if len(options['DB']) > 1:
-        log.info("Enabling multiprocessing")
-
-    else:
-        if backupDB(options['HOSTNAME'], options['USER'], options['PASS'], options['DB'][0]):
-            zipDB(options['DB'][0])
-
-    if makeTar(options['HOSTNAME'], options['DESTINATION']):
-        cleanUp()
-
-
-#Launching the main execution
-if __name__ == "__main__":
-
-    options = processLineArgument()
+    global log
 
     # Preparing the logging system
-    log = logging.getLogger("backup")
+    log = logging.getLogger("logging")
     log.setLevel(logging.INFO)
     log_format = logging.Formatter('[%(asctime)s] [%(funcName)s] %(levelname)s %(message)s')
     try:
@@ -313,7 +344,67 @@ if __name__ == "__main__":
         print e
         sys.exit(3)
 
-    #Launching the executor
+
+
+
+def main(options):
+    """
+    Main function to execute the backup of the tables.
+    """
+    log.info("Starting Backup MySQL")
+
+    t_ini = time.time()  # initial time mark
+
+    if not checkDependencies():
+        sys.exit(3)
+
+    if len(options['DB']) > 1:
+        log.info("Enabling multiprocessing")
+
+        # Deleting garbagge files in /var/run/ when there are problems
+        if not os.path.exists(os.path.dirname(PIDFILE)):
+            os.mkdir(os.path.dirname(PIDFILE))
+        pattern = "*.MainThread-*"
+        trash = glob.glob(os.path.join(os.path.dirname(PIDFILE), pattern))
+        if trash:
+            for i in trash:
+                os.remove(i)
+
+        # Creating the Pidfile for handle the processes pids
+        if os.path.exists(PIDFILE):  # sanitize PIDFILE
+            os.remove(PIDFILE)
+        createPidfile(os.getpid())
+
+        if len(options['DB']) < options['MAX_PROCESSES']:
+            options['MAX_PROCESSES'] = len(options['DB'])
+
+
+
+        pool = Pool(processes=options['MAX_PROCESSES'], initializer=initProcess)
+        pool.map_async(backupDB, options['DB']).get(9999999)
+        pool.close()
+        pool.join()
+
+        pool = Pool(processes=options['MAX_PROCESSES'], initializer=initProcess)
+        pool.map_async(zipDB, options['DB']).get(9999999)
+        pool.close()
+        pool.join()
+
+    elif len(options['DB']) == 1:
+        if backupDB(options['DB'][0]):
+            zipDB(options['DB'][0])
+
+    makeTar(options['HOSTNAME'], options['DESTINATION'])
+    cleanUp()
+
+    t_end = time.time()  # end time mark
+    log.info("Total time spent: " + str(round(t_end - t_ini, 4)) + " seconds")
+
+
+#Launching the main execution
+if __name__ == "__main__":
+    options = processLineArgument()
+    configLogger(options)
     main(options)
 
 
