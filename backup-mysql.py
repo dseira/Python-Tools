@@ -24,17 +24,18 @@ __license__             = """This program is free software: you can redistribute
 
 # Standard imports
 import argparse
-from datetime import datetime
 import glob
 import logging
-from multiprocessing import Pool, Manager
 import os
 import shutil
 import socket
-from subprocess import Popen, PIPE
 import sys
 import tarfile
 import time
+
+from datetime import datetime
+from multiprocessing import Pool, Manager
+from subprocess import Popen, PIPE
 
 # Other imports
 try:
